@@ -22,7 +22,7 @@ tr -d '\0' < /proc/device-tree/compatible | grep -q j313 \
 [ -r /proc/config.gz ] || die "/proc/config.gz missing; cannot seed the config."
 
 avail=$(df --output=avail -BG "$BASE" | tail -1 | tr -dc '0-9')
-[ "${avail:-0}" -ge 25 ] || die "Need ~25 GB free, only ${avail}G available."
+[ "${avail:-0}" -ge 8 ] || die "Need ~8 GB free, only ${avail}G available."
 echo "    machine ok, ${avail}G free, building with -j${JOBS}"
 
 # ------------------------------------------------------------ dependencies

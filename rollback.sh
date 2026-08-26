@@ -46,7 +46,7 @@ say "Rolled back"
 cat <<DONE
 
   Your system is back to the stock kernel and stock device trees.
-  The source tree is still at $BASE/linux — delete it to reclaim ~25 GB:
+  The source tree is still at $BASE/linux — delete it to reclaim ~3 GB:
       rm -rf $BASE/linux
 
   Emergency fallback, if the machine will not boot at all: from macOS

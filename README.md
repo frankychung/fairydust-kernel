@@ -153,13 +153,26 @@ then re-run `sudo ./install.sh` (or `sudo ./rollback.sh` to clean up).
 ### Disk
 
 The kernel plus its initramfs is ~52 MB in `/boot`, so check you have room
-there — an Asahi `/boot` is small and can be tight. The source tree in `linux/`
-is ~25 GB during a build, and Omarchy's updater refuses to run with under 10 GB
-free on `/`. If space gets tight:
+there — an Asahi `/boot` is small and can be tight. On `/`, the built source
+tree in `linux/` measured 3.3 GB (2.2 GB source, 0.8 GB build artifacts,
+0.3 GB git history), plus ~94 MB of installed modules. `build.sh` asks for
+8 GB free to leave headroom.
+
+To reclaim space without giving up a fast rebuild — drops the object files,
+keeps the source and git history:
+
+```sh
+cd linux && make clean    # ~1.2 GB back
+```
+
+To reclaim all of it, at the cost of a full re-clone next time:
 
 ```sh
 rm -rf linux/    # build.sh re-clones it next time
 ```
+
+Note that Omarchy's updater refuses to run with under 10 GB free on `/`, so
+keep that in mind if the disk is tight.
 
 ## Licence
 
