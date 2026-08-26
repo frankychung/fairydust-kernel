@@ -13,6 +13,7 @@ warn() { printf '\033[1;33m    %s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 [ "$EUID" -eq 0 ] || die "Run this with sudo:  sudo $0"
+. "$BASE/detect.sh"
 [ -f "$BASE/kver" ] || die "No build found. Run build.sh first."
 KVER="$(cat "$BASE/kver")"
 IMAGE="$SRC/arch/arm64/boot/Image"
@@ -47,7 +48,7 @@ cp "$SRC"/arch/arm64/boot/dts/apple/*.dtb "/usr/lib/modules/$KVER/dtbs/"
 echo "    $(ls /usr/lib/modules/$KVER/dtbs/*.dtb | wc -l) device trees installed"
 
 say "Verifying the installed device tree"
-python3 "$BASE/check-dtb.py" "/usr/lib/modules/$KVER/dtbs/t8103-j313.dtb" \
+python3 "$BASE/check-dtb.py" "/usr/lib/modules/$KVER/dtbs/$DTB" \
   || die "Installed device tree does not enable the external display. Stopping."
 
 # --------------------------------------------------------------- initramfs
@@ -108,7 +109,7 @@ cat <<DONE
       Advanced options for Omarchy Linux
         -> Omarchy Linux, with Linux linux-asahi-fairydust
 
-  Plug the monitor into the FRONT-left USB-C port (nearer you, not the hinge).
+  Plug the monitor into: $(port_hint)
   Plugging in before you boot is more reliable than hot-plugging.
 
   If anything goes wrong: reboot and pick the normal entry, then run

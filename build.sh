@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 #
 # Step 1 of 2 — build the Asahi "fairydust" kernel (USB-C DisplayPort support).
-# Runs as your normal user. Touches nothing outside ~/fairydust-kernel except
+# Runs as your normal user. Touches nothing outside this directory except
 # installing build dependencies. If this fails, your system is unchanged.
 #
 set -euo pipefail
 
 BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$BASE/linux"
-JOBS="${JOBS:-6}"   # 8 cores, but only 7.4 GB RAM — 6 keeps us out of swap
+
+# Parallelism is bounded by RAM, not cores — each job peaks around 1.2 GB, and
+# swapping costs far more than the lost parallelism. 7.4 GB gives 6, 16 GB gives
+# the full 8. Override by setting JOBS in the environment.
+mem_mb=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
+cores=$(nproc)
+by_mem=$(( mem_mb / 1200 )); [ "$by_mem" -lt 2 ] && by_mem=2
+JOBS="${JOBS:-$(( cores < by_mem ? cores : by_mem ))}"
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m    %s\033[0m\n' "$*"; }
@@ -16,14 +23,15 @@ die()  { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- preflight
 say "Preflight checks"
-[ -r /proc/device-tree/compatible ] || die "This is not an Apple Silicon machine."
-tr -d '\0' < /proc/device-tree/compatible | grep -q j313 \
-  || die "Written for the M1 MacBook Air (apple,j313). Yours is different."
+. "$BASE/detect.sh"
+echo "    $MODEL"
+echo "    board $BOARD on $SOC, device tree $DTB"
+board_is_tested || warn "$BOARD is untested here — continuing; the device-tree check below is the real gate."
 [ -r /proc/config.gz ] || die "/proc/config.gz missing; cannot seed the config."
 
 avail=$(df --output=avail -BG "$BASE" | tail -1 | tr -dc '0-9')
 [ "${avail:-0}" -ge 8 ] || die "Need ~8 GB free, only ${avail}G available."
-echo "    machine ok, ${avail}G free, building with -j${JOBS}"
+echo "    ${avail}G free, building with -j${JOBS} (${cores} cores, $((mem_mb/1024))G RAM)"
 
 # ------------------------------------------------------------ dependencies
 say "Installing build dependencies"
@@ -44,9 +52,24 @@ fi
 cd "$SRC"
 
 # Prove we actually got the DisplayPort commits, not plain asahi.
-grep -q 'ENABLE_DCPEXT_TYPEC' arch/arm64/boot/dts/apple/t8103-jxxx.dtsi \
-  || die "This tree is missing the fairydust DP patches. Wrong branch?"
-echo "    fairydust DP patches confirmed present in the device tree"
+# Two separate questions. First: is this the fairydust branch at all? That is a
+# hard error — nothing downstream can succeed without it.
+grep -rlq 'ENABLE_DCPEXT_TYPEC' arch/arm64/boot/dts/apple/ \
+  || die "No DP patches anywhere in this tree. This is not the fairydust branch."
+echo "    fairydust branch confirmed"
+
+# Second: does the patch reach THIS board? Only a warning — the check on the
+# built blob below is authoritative, and upstream file layout varies enough that
+# a miss here is more likely our lookup than a genuinely unsupported board.
+found=""
+for f in $(dp_patch_sources); do
+    [ -f "$f" ] && grep -q 'ENABLE_DCPEXT_TYPEC' "$f" && { found="$f"; break; }
+done
+if [ -n "$found" ]; then
+    echo "    $BOARD enabled by $(basename "$found")"
+else
+    warn "Could not find the DP enable for $BOARD — building anyway; the device-tree check after the build will settle it."
+fi
 
 # ------------------------------------------------------------------ config
 say "Seeding the config from your running kernel"
@@ -84,7 +107,7 @@ time make -j"$JOBS" Image modules dtbs
 
 # Last check: did the built device tree really enable the external display?
 say "Confirming the built device tree enables the external display"
-python3 "$BASE/check-dtb.py" arch/arm64/boot/dts/apple/t8103-j313.dtb \
+python3 "$BASE/check-dtb.py" "arch/arm64/boot/dts/apple/$DTB" \
   || die "The built device tree did NOT enable dcpext. Stopping before install."
 
 say "Build complete: $KVER"

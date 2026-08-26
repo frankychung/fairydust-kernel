@@ -1,14 +1,19 @@
-# USB-C external display on the M1 MacBook Air (Omarchy / Asahi)
+# USB-C external display on Apple Silicon Macs (Omarchy / Asahi)
 
-Builds the Asahi `fairydust` kernel so a USB-C monitor works on the M1 MacBook
-Air (`apple,j313` / t8103) running Omarchy on Asahi.
+Builds the Asahi `fairydust` kernel so a USB-C monitor works on an Apple Silicon
+Mac running Omarchy on Asahi. The scripts read `/proc/device-tree/compatible`
+and derive everything machine-specific from it, so one checkout follows you
+between Macs without edits.
+
+Run on: MacBook Air M2 13" (`apple,j413` / t8112) and MacBook Air M1
+(`apple,j313` / t8103).
 
 ## Credit
 
 All of the actual work here is [Asahi Linux](https://asahilinux.org/)'s. The
 `fairydust` branch of [AsahiLinux/linux](https://github.com/AsahiLinux/linux) is
 where DisplayPort output on Apple Silicon is being developed. This repository is
-nothing but four shell scripts that build that branch on Arch/Omarchy and work
+nothing but a few shell scripts that build that branch on Arch/Omarchy and work
 around one packaging trap along the way.
 
 ## This is unsupported — please do not report its bugs to Asahi
@@ -19,7 +24,7 @@ issues on the Asahi Linux tracker, and do not ask for help in Asahi support
 channels while running it.** Reproduce on a stock `linux-asahi` kernel first;
 if it only happens here, it is not their bug.
 
-Expect: one display only, front-left port only, flaky hot-plug, and possibly
+Expect: one display only, one specific port only, flaky hot-plug, and possibly
 wrong colours or missing resolutions. 4K60 should work — the PHY does HBR3
 (32.4 Gbps across 4 lanes) and 4K60 8-bit needs 12.5. There is no DSC support
 in the driver, so everything runs uncompressed.
@@ -45,18 +50,43 @@ and those 2 C files. This builds that branch.
 ## Check this first
 
 DisplayPort Alt Mode negotiation is not the problem, and it is worth confirming
-that before spending 90 minutes on a build. With a monitor attached to the
-front-left port, every USB device should drop to 480 Mbps and the SuperSpeed bus
-should sit empty — that means all four lanes have been handed to DisplayPort:
+that before spending 90 minutes on a build. With a monitor attached to the right
+port, every USB device drops to 480 Mbps and the SuperSpeed bus sits empty —
+that means all four lanes have been handed to DisplayPort:
 
 ```sh
-cat /sys/class/typec/port0/*/mode*/active   # DP alt mode should be "yes"
-ls /sys/bus/usb/devices/                    # SuperSpeed bus empty while attached
+# Which root hub is SuperSpeed (speed 5000 or 10000)?
+for u in /sys/bus/usb/devices/usb*; do echo "$(basename "$u") $(cat "$u/speed")"; done
+
+# Everything attached should read 480, and the SuperSpeed bus should be empty.
+for d in /sys/bus/usb/devices/[0-9]*-[0-9]*; do
+    [ -e "$d/speed" ] && echo "$(basename "$d") $(cat "$d/speed") $(cat "$d/product" 2>/dev/null)"
+done
 ```
 
-If that already holds on your machine, the only missing piece is a display
-controller to drive those lanes — which is what this fixes. If DP alt mode is
-*not* negotiating, this repository will not help you.
+Two sysfs traps, both learned the hard way:
+
+**Do not trust `/sys/class/typec/port*/*/mode*/active`.** Under `tps6598x` it
+reads `yes` on every port whether or not anything is plugged in, so it cannot
+tell you whether DP alt mode was entered. The empty SuperSpeed bus is the real
+signal.
+
+**Do not read `/sys/class/typec/<port>-partner/identity/product`.** On a partner
+with no identity VDO — MagSafe, on a laptop — it faults the `typec` module and
+oopses the kernel on 7.1.6:
+
+```
+Unable to handle kernel paging request at virtual address ffff8000822a7d10
+pc : product_show+0x34/0x60 [typec]
+```
+
+It only kills the reading process, but it taints the kernel until you reboot.
+Nothing to do with fairydust — just do not poke it. `verify.sh` carries a
+comment so nobody adds it back.
+
+If DP alt mode is negotiating, the only missing piece is a display controller to
+drive those lanes — which is what this fixes. If it is *not*, this repository
+will not help you.
 
 ## Usage
 
@@ -67,6 +97,9 @@ sudo reboot
 ./verify.sh             # after picking the fairydust entry in GRUB
 ```
 
+`build.sh` picks its own `-j` from RAM (~1.2 GB per job, capped at core count):
+6 on a 8 GB machine, 8 on a 16 GB one. Override with `JOBS=n ./build.sh`.
+
 Rollback at any time:
 
 ```sh
@@ -75,9 +108,64 @@ sudo ./rollback.sh
 
 ## Which port
 
-**Front-left only** — the port nearer you, not the hinge. This is not a
-preference; the device tree hardcodes `atcphy1`, and the other port physically
-cannot carry DisplayPort. Plug in before booting; hot-plug is less reliable.
+Only one port works. This is not a preference — the device tree hardcodes a
+single PHY (`atcphy1` on every board here) and the others physically cannot
+carry DisplayPort. *Which* socket that is depends on the chassis and can only be
+found by trying:
+
+| Board | Machine | Port |
+|---|---|---|
+| `j313` | MacBook Air M1 | front-left — nearer you, not the hinge |
+| `j413` | MacBook Air M2 13" | left side, the one on `atcphy1` (`/sys/class/typec/port1`) |
+| `j474s` | Mac mini M2 Pro | back right middle — second closest to the power connector |
+
+`verify.sh` prints the entry for your board and lists every port with the PHY
+behind it, so you can match `atcphy1` (`503000000.phy`) to a physical socket.
+Plug in before booting; hot-plug is less reliable.
+
+## Moving between Macs
+
+There is deliberately no per-generation split, because M1-vs-M2 is not where the
+real seam is. Upstream groups the boards differently:
+
+| Board | Where the DP enable lives |
+|---|---|
+| `j313` (M1 Air) | `t8103-jxxx.dtsi` — shared, so every M1 board inherits it |
+| `j413` / `j415` / `j493` (M2 laptops) | their own `.dts`, one `#define` each |
+| `j314c` / `j316c` (MBP 14/16) | `t600x-j314-j316.dtsi`, reached by `#include` |
+| `j473` (Mac mini M2) | its own `.dts`, plus its own override block |
+
+The M1 Air and the M2 Air are the *same* case: one-line enable, `atcphy1`,
+`dcpext` at `0x271c00000`. The Mac mini M2 differs from the M2 Air far more than
+the M2 Air differs from the M1 Air — swapped `dcp`/`dcpext` roles, a different
+`mux-index`, a different audio node. Splitting by generation would separate the
+two boards that are identical and group the two that are not.
+
+So `detect.sh` derives it instead:
+
+```
+apple,j413  apple,t8112  apple,arm-platform   ->   BOARD=j413  SOC=t8112
+                                              ->   t8112-j413.dtb
+```
+
+and the checks that would otherwise need a per-board table do not have one:
+
+- `check-dtb.py` looks for `dcp@271c00000`, the same address on t8103 and t8112.
+- `verify.sh` prefers the `dcpext` alias the fairydust device tree adds, which
+  works regardless of address.
+- `dp_patch_sources` looks in the board `.dts`, everything it `#include`s, and
+  the SoC-wide `.dtsi` — covering all four layouts above.
+- `-j` comes from RAM, not a constant.
+
+The only genuinely per-board fact is the port table above.
+
+To dry-run the detection for a machine you do not have in front of you:
+
+```sh
+printf 'apple,j313\0apple,t8103\0' > /tmp/c
+COMPAT_FILE=/tmp/c bash -c '. ./detect.sh; echo "$BOARD $SOC $DTB"'
+# -> j313 t8103 t8103-j313.dtb
+```
 
 ## The trap this handles
 
@@ -93,6 +181,9 @@ would be silently ignored — the build succeeds, the install succeeds, and the
 monitor stays dark, with no error anywhere to tell you why. `install.sh` pins
 `DTBS` explicitly, and `check-dtb.py` verifies the installed blob really does
 enable the external controller.
+
+`install.sh` pins the *whole* directory (`.../dtbs/*.dtb`), so the derived board
+name only decides which blob gets verified, not which get shipped.
 
 ## What changes on your system
 
