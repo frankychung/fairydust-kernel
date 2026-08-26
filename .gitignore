@@ -1,0 +1,9 @@
+# Kernel source tree — ~3.3 GB, re-cloned by build.sh
+/linux/
+
+# Generated build state
+/kver
+
+# Machine-specific backups written by install.sh / rollback.sh
+/boot.bin.backup-*
+/grub.default.bak
