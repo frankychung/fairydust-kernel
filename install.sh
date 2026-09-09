@@ -35,6 +35,17 @@ done
 say "Installing modules to /usr/lib/modules/$KVER"
 make -C "$SRC" INSTALL_MOD_STRIP=1 modules_install >/dev/null
 
+# kernel-modules-hook removes module trees that are neither running nor owned by
+# a pacman package. Preserve this locally installed kernel when booting stock.
+say "Protecting the local modules from automatic cleanup"
+install -d /etc/systemd/system/linux-modules-cleanup.service.d
+cat > /etc/systemd/system/linux-modules-cleanup.service.d/fairydust.conf <<'CONF'
+[Service]
+ExecStart=
+ExecStart=/bin/bash -exc 'for i in /usr/lib/modules/[0-9]*; do if [[ $${i##*/} = \'%v\' ]] || [[ $${i##*/} = *-fairydust* ]] || pacman -Qo "$${i}"; then continue; fi; rsync -AHXal "$${i}" /usr/lib/modules/.old/; rm -rf "$${i}"; done'
+CONF
+systemctl daemon-reload
+
 # ------------------------------------------------------------------- image
 say "Installing the kernel image"
 install -Dm644 "$IMAGE" /boot/vmlinuz-linux-asahi-fairydust

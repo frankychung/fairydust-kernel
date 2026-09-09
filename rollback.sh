@@ -36,6 +36,9 @@ rm -fv /boot/vmlinuz-linux-asahi-fairydust \
        /boot/initramfs-linux-asahi-fairydust.img \
        /etc/mkinitcpio.d/linux-asahi-fairydust.preset
 [ -n "$KVER" ] && rm -rf "/usr/lib/modules/$KVER" && echo "    removed /usr/lib/modules/$KVER"
+rm -f /etc/systemd/system/linux-modules-cleanup.service.d/fairydust.conf
+rmdir --ignore-fail-on-non-empty /etc/systemd/system/linux-modules-cleanup.service.d 2>/dev/null || true
+systemctl daemon-reload
 
 say "Restoring the boot menu"
 [ -f "$BASE/grub.default.bak" ] && cp -a "$BASE/grub.default.bak" /etc/default/grub
